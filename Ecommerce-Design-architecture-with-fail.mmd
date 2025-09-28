@@ -1,0 +1,74 @@
+%% E-commerce Microservices Architecture - Including Failure & Compensation Path
+graph TD
+    subgraph User Interaction
+        Client([<font size=5>📱 Client</font><br>Web/Mobile App])
+        PaymentGateway[<font size=5>💳 External<br>Payment Gateway</font><br>Stripe, MoMo, ZaloPay]
+    end
+
+    subgraph Your System
+        APIGateway(API Gateway)
+
+        subgraph "Phase 1: Synchronous Intent"
+            Client -- "2. Place Order API Call" --> APIGateway
+            APIGateway -- "3. Create Pending Order" --> OrderService
+        end
+
+        subgraph "Phase 2: Asynchronous Saga"
+            Broker((<font size=5>Message Broker</font><br>Kafka))
+            OrderService(Order Service<br><i>Saga Participant</i>)
+            PaymentService(Payment Service)
+            ProductService(Product Service)
+            ShippingService(Shipping Service)
+            NotificationService(Notification Service)
+        end
+        
+        subgraph "CQRS Read Model"
+            CustomerSummaryService(CustomerSummaryService<br><i>Optimized Read Database</i>)
+        end
+    end
+
+    %% -- SUCCESS PATH --
+    %% 1. Payment Intent & Saga Initiation
+    Client -- "1. Get Payment Token" --> PaymentGateway
+    OrderService -.->|"<font size=2>4. Publishes: <b>OrderPlaced</b></font>"| Broker
+    
+    %% 2. Parallel Processing
+    Broker -.->|"<font size=2>Consumes <b>OrderPlaced</b></font>"| PaymentService
+    Broker -.->|"<font size=2>Consumes <b>OrderPlaced</b></font>"| ProductService
+    PaymentGateway -.->|"<font size=2>Webhook</font>"| PaymentService
+    
+    %% 3. Saga Continues (Success)
+    PaymentService -.->|"<font size=2>Publishes: <b>PaymentProcessed</b></font>"| Broker
+    ProductService -.->|"<font size=2>Publishes: <b>StockReserved</b></font>"| Broker
+    
+    %% 4. Saga Finalization (Success)
+    Broker -.->|"<font size=2>Consumes <b>PaymentProcessed</b></font>"| OrderService
+    Broker -.->|"<font size=2>Consumes <b>StockReserved</b></font>"| OrderService
+    OrderService -.->|"<font size=2>5. Publishes: <b>OrderConfirmed</b></font>"| Broker
+    
+    %% 5. Downstream Consumers (Success)
+    Broker -.->|"<font size=2>Consumes <b>OrderConfirmed</b><br>to Start Delivery</font>"| ShippingService
+    Broker -.->|"<font size=2>Consumes <b>OrderConfirmed</b><br>to Send Success Email</font>"| NotificationService
+    Broker -.->|"<font size=2>Consumes <b>OrderConfirmed</b></font>"| CustomerSummaryService
+    APIGateway -- "GET /user/summary" --> CustomerSummaryService
+
+    %% -- FAILURE & COMPENSATION PATH --
+    %% A. Payment Fails
+    PaymentService -.->|"<font color=red size=2>Publishes: <b>PaymentFailed</b></font>"| Broker
+
+    %% B. Order Service handles the failure
+    Broker -.->|"<font color=red size=2>Consumes <b>PaymentFailed</b></font>"| OrderService
+
+    %% C. Order Service initiates Compensation
+    OrderService -.->|"<font color=red size=2>Publishes Compensating Event:<br><b>ReleaseStock</b></font>"| Broker
+    OrderService -.->|"<font color=red size=2>Publishes Final State:<br><b>OrderFailed</b></font>"| Broker
+
+    %% D. Services react to compensation and failure
+    Broker -.->|"<font color=red size=2>Consumes <b>ReleaseStock</b><br>to revert inventory</font>"| ProductService
+    Broker -.->|"<font color=red size=2>Consumes <b>OrderFailed</b><br>to Send Failure Email</font>"| NotificationService
+    
+    %% Styling
+    style Client fill:#D6EAF8,stroke:#333,stroke-width:2px
+    style PaymentGateway fill:#FADBD8,stroke:#C0392B,stroke-width:2px
+    style Broker fill:#FCF3CF,stroke:#F1C40F,stroke-width:4px
+    style CustomerSummaryService fill:#D5F5E3,stroke:#27AE60,stroke-width:2px
