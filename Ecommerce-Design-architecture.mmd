@@ -1,0 +1,67 @@
+%% E-commerce Microservices Architecture - Updated Design with Explicit Event Consumption
+graph TD
+    subgraph User Interaction
+        Client([<font size=5>📱 Client</font><br>Web/Mobile App])
+        PaymentGateway[<font size=5>💳 External<br>Payment Gateway</font><br>Stripe, MoMo, ZaloPay]
+    end
+
+    subgraph Your System
+        APIGateway(API Gateway)
+
+        subgraph "Phase 1: Synchronous Intent (Fast Response)"
+            Client -- "2. Place Order API Call<br>(with payment token)" --> APIGateway
+            APIGateway -- "3. Create Pending Order" --> OrderService
+        end
+
+        subgraph "Phase 2: Asynchronous Saga (Backend Processing)"
+            Broker((<font size=5>Message Broker</font><br>Kafka))
+            OrderService(Order Service<br><i>Saga Participant</i>)
+            PaymentService(Payment Service)
+            ProductService(Product Service)
+            ShippingService(Shipping Service)
+            NotificationService(Notification Service)
+        end
+        
+        subgraph "CQRS Read Model (Fast Queries)"
+            CustomerSummaryService(CustomerSummaryService<br><i>Optimized Read Database</i>)
+        end
+    end
+
+    %% Define Communication Flows
+    %% 1. Payment Intent
+    Client -- "1. Get Payment Token" --> PaymentGateway
+    
+    %% 2. Saga Initiation
+    OrderService -.->|"<font size=2>4. Publishes: <b>OrderPlaced</b></font>"| Broker
+    
+    %% 3. Parallel Processing
+    Broker -.->|"<font size=2>Consumes <b>OrderPlaced</b></font>"| PaymentService
+    Broker -.->|"<font size=2>Consumes <b>OrderPlaced</b></font>"| ProductService
+    
+    %% 4. Webhook for external confirmation (e.g. PayPal, MoMo)
+    PaymentGateway -.->|"<font size=2>Webhook<br>Confirmation</font>"| PaymentService
+    
+    %% 5. Saga Continues
+    PaymentService -.->|"<font size=2>Publishes: <b>PaymentProcessed</b></font>"| Broker
+    ProductService -.->|"<font size=2>Publishes: <b>StockReserved</b></font>"| Broker
+    
+    %% 6. Saga Finalization (OrderService consumes both to finalize)
+    Broker -.->|"<font size=2>Consumes <b>PaymentProcessed</b></font>"| OrderService
+    Broker -.->|"<font size=2>Consumes <b>StockReserved</b></font>"| OrderService
+    OrderService -.->|"<font size=2>5. Publishes: <b>OrderConfirmed</b></font>"| Broker
+    
+    %% 7. Downstream Consumers
+    Broker -.->|"<font size=2>Consumes <b>OrderConfirmed</b><br>to Start Delivery</font>"| ShippingService
+    Broker -.->|"<font size=2>Consumes <b>OrderConfirmed</b><br>to Send Email/SMS</font>"| NotificationService
+    
+    %% 8. CQRS Read Model Update
+    Broker -.->|"<font size=2>Consumes <b>OrderConfirmed</b><br>to Update Read DB</font>"| CustomerSummaryService
+    
+    %% 9. User queries for data
+    APIGateway -- "GET /user/summary" --> CustomerSummaryService
+    
+    %% Styling
+    style Client fill:#D6EAF8,stroke:#333,stroke-width:2px
+    style PaymentGateway fill:#FADBD8,stroke:#C0392B,stroke-width:2px
+    style Broker fill:#FCF3CF,stroke:#F1C40F,stroke-width:4px
+    style CustomerSummaryService fill:#D5F5E3,stroke:#27AE60,stroke-width:2px
